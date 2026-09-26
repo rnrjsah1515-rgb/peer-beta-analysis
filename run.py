@@ -13,7 +13,8 @@ from src.config import ROOT, api_key, load_config, load_env
 from src.excel import build
 from src.excel_check import check
 from src.pipeline import INDEX_CHOICES, measure
-from src.precision import analyze, relevered_band
+from src.global_peers import measure_global
+from src.precision import analyze, average_beta_se, band_from, relevered_band
 from src.prices import fx_rate
 from src import beta as B
 from src.selection import debt_of, range_table, run_chain
@@ -66,14 +67,40 @@ def main():
           f" · Ke {coe['risk_free'] + band[0] * coe['erp']:.1%}~{coe['risk_free'] + band[1] * coe['erp']:.1%}")
     print(f"  βu 중앙값 {chain.median_unlevered:.3f} · 목표 D/E {chain.target_de:.1%} → 재레버 β {chain.relevered:.3f}")
 
+    # ── 확장표본: 해외 Peer 를 더해 업종 공통요인의 영향을 줄인다 ──
+    gl = measure_global(cfg, meas.valuation_date, args.refresh)
+    ext = None
+    if not gl.table.empty:
+        for t, row in gl.excluded.iterrows():
+            print(f"  · 해외 Peer 제외 — {row['name']}: {row['excluded_reason']}")
+        dom_raw = {cfg["peers"][c][0]: float(raw[c]) for c in cfg["peers"]}
+        ses = {**prec.ses_by_name(cfg), **gl.ses}
+        resid = {**{cfg["peers"][c][0]: prec.residuals[c] for c in cfg["peers"]}, **gl.residuals}
+        se_ext, corr_ext, nobs_ext = average_beta_se(ses, resid)
+        betas = {**dom_raw, **{r["name"]: r["raw_beta"] for _, r in gl.table.iterrows()}}
+        des = {**{cfg["peers"][c][0]: cap["de"][c] for c in cfg["peers"]},
+               **{r["name"]: r["de"] for _, r in gl.table.iterrows()}}
+        unlev = list(chain.peers["unlevered"]) + list(gl.table["unlevered"])
+        ext = {
+            "n": len(betas), "avg_beta": float(np.mean(list(betas.values()))), "se": se_ext,
+            "mean_corr": corr_ext, "nobs": nobs_ext, "median_unlevered": float(np.median(unlev)),
+            "band": band_from(float(np.mean(list(betas.values()))), se_ext, float(np.mean(list(des.values()))),
+                              tax, chain.target_de, nobs_ext),
+        }
+        ext["relevered"] = B.relever_hamada(ext["median_unlevered"], chain.target_de, tax)
+        print(f"  확장표본({ext['n']}사, 해외 {len(gl.table)}사): 평균β SE {prec.portfolio.se:.3f} → {se_ext:.3f}"
+              f" · 잔차상관 {prec.mean_residual_corr:.2f} → {corr_ext:.2f}"
+              f" · βu 중앙값 {ext['median_unlevered']:.3f} → 재레버 {ext['relevered']:.3f}"
+              f" (구간 {ext['band'][0]:.2f}~{ext['band'][1]:.2f})")
+
     print("[4/4] 엑셀·보고서")
     xlsx = ROOT / "output" / "peer_beta.xlsx"
-    refs = build(xlsx, cfg, meas, cap, debt_log, ranges, INDEX_CHOICES, prec, band)
+    refs = build(xlsx, cfg, meas, cap, debt_log, ranges, INDEX_CHOICES, prec, band, gl, ext)
     expected = {refs["median_unlevered"]: chain.median_unlevered, refs["relevered"]: chain.relevered,
                 **{refs[f"raw_{c}"]: float(raw[c]) for c in cfg["peers"]}}
     excel_result = "생략" if args.skip_excel_check else check(xlsx, expected)
     print("  엑셀 대조:", excel_result)
-    report.write(ROOT / "output" / "summary.md", cfg, meas, cap, chain, ranges, excel_result, prec, band)
+    report.write(ROOT / "output" / "summary.md", cfg, meas, cap, chain, ranges, excel_result, prec, band, gl, ext)
     print("완료:", xlsx)
 
 

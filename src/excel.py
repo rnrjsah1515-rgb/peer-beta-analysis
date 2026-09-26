@@ -43,7 +43,7 @@ def _frame(ws, df: pd.DataFrame, row: int = 1, formats: dict[str, str] | None = 
 
 
 def build(path: Path, cfg: dict, meas, cap: pd.DataFrame, debt_log: pd.DataFrame, ranges: pd.DataFrame,
-          index_labels: dict[str, str], prec=None, band=None) -> dict[str, str]:
+          index_labels: dict[str, str], prec=None, band=None, gl=None, ext=None) -> dict[str, str]:
     """워크북을 저장하고, 파이썬 결과와 대조할 셀 주소를 돌려준다."""
     wb = Workbook()
     peers = list(cfg["peers"])
@@ -179,6 +179,34 @@ def build(path: Path, cfg: dict, meas, cap: pd.DataFrame, debt_log: pd.DataFrame
         ps.cell(len(rows) + 4, 1, "Peer 를 묶어도 표준오차가 '독립 가정' 값까지 줄지 않는 이유는 잔차가 서로 상관되어 있기 때문이다(업종 공통요인).")
         ps.column_dimensions["A"].width = 44
         ps.column_dimensions["B"].width = 14
+
+    # ── 확장표본 ──
+    if ext:
+        gs2 = wb.create_sheet("확장표본")
+        gs2["A1"] = "해외 ODM 을 더한 확장표본 — 공통요인이 다른 표본을 넣어야 추정오차가 실제로 줄어든다"
+        gs2["A1"].font = BOLD
+        cols = ["회사", "국가", "시장지수", "원시 β", "SE", "R²", "D/E", "βu", "통화", "재무제표 기준일"]
+        view = gl.table.reset_index()[["name", "country", "index", "raw_beta", "se", "r2", "de", "unlevered",
+                                       "currency", "asof"]]
+        view.columns = cols
+        _frame(gs2, view, 3, {"원시 β": F3, "SE": F3, "R²": PCT, "D/E": PCT, "βu": F3})
+        r0 = len(view) + 6
+        for i, (label, dom, e) in enumerate([
+            ("평균 베타의 표준오차", prec.portfolio.se, ext["se"]),
+            ("잔차 간 평균 상관", prec.mean_residual_corr, ext["mean_corr"]),
+            ("βu 중앙값", prec.portfolio.beta and float(ext["median_unlevered"]), ext["median_unlevered"]),
+            ("재레버 베타 구간 하한", band[0], ext["band"][0]),
+            ("재레버 베타 구간 상한", band[1], ext["band"][1]),
+        ], start=0):
+            gs2.cell(r0 + i, 1, label)
+            gs2.cell(r0 + i, 2, float(dom)).number_format = F3
+            gs2.cell(r0 + i, 3, float(e)).number_format = F3
+        gs2.cell(r0 - 1, 2, "국내 6사").font = BOLD
+        gs2.cell(r0 - 1, 3, f"확장표본 {ext['n']}사").font = BOLD
+        if not gl.excluded.empty:
+            gs2.cell(r0 + 6, 1, "사전 스크리닝 제외: " + "; ".join(
+                f"{r['name']} ({r['excluded_reason']})" for _, r in gl.excluded.iterrows()))
+        gs2.column_dimensions["A"].width = 30
 
     # ── 회귀통계 ──
     gs = wb.create_sheet("회귀통계")

@@ -9,9 +9,22 @@ import io
 import xml.etree.ElementTree as ET
 import zipfile
 
+import time
+
 import requests
 
 from .cache import CACHE_DIR, cached_json
+
+
+def get(url: str, params: dict, timeout: int = 30, tries: int = 3):
+    """일시적인 네트워크·SSL 오류는 잠깐 쉬었다 다시 시도한다."""
+    for attempt in range(tries):
+        try:
+            return requests.get(url, params=params, timeout=timeout)
+        except requests.RequestException:
+            if attempt == tries - 1:
+                raise
+            time.sleep(2 * (attempt + 1))
 
 BASE = "https://opendart.fss.or.kr/api"
 ANNUAL_REPORT = "11011"
@@ -25,7 +38,7 @@ def corp_code(key: str, stock_code: str, refresh: bool = False) -> tuple[str, st
     """종목코드로 (corp_code, corp_name) 을 찾는다."""
     path = CACHE_DIR / "dart" / "CORPCODE.xml"
     if refresh or not path.exists():
-        resp = requests.get(f"{BASE}/corpCode.xml", params={"crtfc_key": key}, timeout=60)
+        resp = get(f"{BASE}/corpCode.xml", {"crtfc_key": key}, timeout=60)
         if not resp.content.startswith(b"PK"):  # 오류 시 zip 이 아닌 JSON/XML 이 온다
             raise DartError(f"corpCode.xml 다운로드 실패: {resp.text[:200]}")
         with zipfile.ZipFile(io.BytesIO(resp.content)) as zf:
@@ -46,7 +59,7 @@ def financial_statements(key: str, corp: str, year: int, fs_div: str = "CFS", re
     params = {"crtfc_key": key, "corp_code": corp, "bsns_year": str(year), "reprt_code": report_code, "fs_div": fs_div}
 
     def fetch():
-        body = requests.get(f"{BASE}/fnlttSinglAcntAll.json", params=params, timeout=30).json()
+        body = get(f"{BASE}/fnlttSinglAcntAll.json", params).json()
         if body.get("status") != "000":
             raise DartError(f"DART {year} {fs_div}: {body.get('status')} {body.get('message')}")
         return body["list"]
@@ -60,7 +73,7 @@ def share_counts(key: str, corp: str, year: int, report_code: str, refresh: bool
     params = {"crtfc_key": key, "corp_code": corp, "bsns_year": str(year), "reprt_code": report_code}
 
     def fetch():
-        body = requests.get(f"{BASE}/stockTotqySttus.json", params=params, timeout=30).json()
+        body = get(f"{BASE}/stockTotqySttus.json", params).json()
         if body.get("status") != "000":
             raise DartError(f"DART 주식총수 {year}: {body.get('status')} {body.get('message')}")
         return body["list"]

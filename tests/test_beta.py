@@ -110,3 +110,27 @@ def test_residual_correlation_blocks_the_sqrt_n_gain():
     p = analyze(rets)
     assert p.mean_residual_corr > 0.8
     assert p.portfolio.se > p.se_if_independent * 1.5
+
+
+def test_average_beta_se_matches_portfolio_regression():
+    """일반화한 식 (1/N²)ΣΣρ·SE·SE 는 같은 지수일 때 포트폴리오 회귀의 표준오차와 같다."""
+    from src.precision import analyze, average_beta_se
+    rng = np.random.default_rng(5)
+    m = pd.Series(rng.normal(0, 0.02, 300))
+    common = pd.Series(rng.normal(0, 0.01, 300))
+    rets = {f"c{i}": pd.DataFrame({"s": (0.7 + 0.1 * i) * m + common + rng.normal(0, 0.01, 300), "m": m})
+            for i in range(4)}
+    p = analyze(rets)
+    se, corr, nobs = average_beta_se(p.ses, {c: p.residuals[c] for c in rets})
+    assert se == pytest.approx(p.portfolio.se, rel=1e-6)
+    assert corr == pytest.approx(p.mean_residual_corr)
+    assert nobs == 300
+
+
+def test_screening_uses_leverage_and_size_only():
+    """사전 스크리닝 기준은 베타 결과가 아니라 D/E·규모로만 적용된다."""
+    from src.global_peers import screen_reason
+    screen = {"max_de": 2.0, "min_market_cap_eok": 1000}
+    assert screen_reason(0.2, 5000e8, screen) == ""
+    assert "D/E" in screen_reason(4.15, 5000e8, screen)
+    assert "시가총액" in screen_reason(0.2, 210e8, screen)
