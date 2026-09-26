@@ -84,3 +84,29 @@ def test_extract_debt_excludes_discounts():
 def test_common_shares():
     rows = [{"se": "보통주", "istc_totqy": "1,000", "tesstk_co": "50"}, {"se": "합계", "istc_totqy": "1,100", "tesstk_co": "50"}]
     assert common_shares(rows) == (1000, 50)
+
+
+def test_portfolio_beta_equals_average_of_betas():
+    """동일가중 포트폴리오의 베타 = 개별 베타의 평균. 달라지는 것은 표준오차뿐이다."""
+    from src.precision import analyze
+    rng = np.random.default_rng(3)
+    m = pd.Series(rng.normal(0, 0.02, 400))
+    rets = {f"c{i}": pd.DataFrame({"s": b * m + rng.normal(0, 0.02, 400), "m": m})
+            for i, b in enumerate([0.6, 0.9, 1.2])}
+    p = analyze(rets)
+    assert p.portfolio.beta == pytest.approx(np.mean([B.ols(r).beta for r in rets.values()]))
+    assert p.portfolio.se < p.mean_single_se          # 묶으면 정밀해지고
+    assert p.se_if_independent == pytest.approx(p.mean_single_se / np.sqrt(3))
+
+
+def test_residual_correlation_blocks_the_sqrt_n_gain():
+    """잔차에 공통요인이 있으면 표준오차가 독립 가정치까지 줄지 않는다."""
+    from src.precision import analyze
+    rng = np.random.default_rng(4)
+    m = pd.Series(rng.normal(0, 0.02, 400))
+    common = pd.Series(rng.normal(0, 0.02, 400))      # 업종 공통 충격
+    rets = {f"c{i}": pd.DataFrame({"s": 0.9 * m + common + rng.normal(0, 0.005, 400), "m": m})
+            for i in range(4)}
+    p = analyze(rets)
+    assert p.mean_residual_corr > 0.8
+    assert p.portfolio.se > p.se_if_independent * 1.5

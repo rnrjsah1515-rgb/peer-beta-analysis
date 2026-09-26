@@ -43,7 +43,7 @@ def _frame(ws, df: pd.DataFrame, row: int = 1, formats: dict[str, str] | None = 
 
 
 def build(path: Path, cfg: dict, meas, cap: pd.DataFrame, debt_log: pd.DataFrame, ranges: pd.DataFrame,
-          index_labels: dict[str, str]) -> dict[str, str]:
+          index_labels: dict[str, str], prec=None, band=None) -> dict[str, str]:
     """워크북을 저장하고, 파이썬 결과와 대조할 셀 주소를 돌려준다."""
     wb = Workbook()
     peers = list(cfg["peers"])
@@ -147,6 +147,38 @@ def build(path: Path, cfg: dict, meas, cap: pd.DataFrame, debt_log: pd.DataFrame
         "index_label": "시장지수", "setting": "측정조건", "median_raw": "원시 β 중앙값", "median_r2": "R² 중앙값",
         "significant": "β>0 유의 (95%)", "n_peers": "Peer 수", "median_unlevered": "βu 중앙값", "relevered": "재레버 β"})
     _frame(rs, view, 3, {"원시 β 중앙값": F3, "R² 중앙값": PCT, "βu 중앙값": F3, "재레버 β": F3})
+
+    # ── 추정오차 ──
+    if prec is not None:
+        ps = wb.create_sheet("추정오차")
+        coe = cfg["cost_of_equity"]
+        rows = [
+            ("Peer 동일가중 포트폴리오 베타", prec.portfolio.beta, F3),
+            ("표준오차", prec.portfolio.se, F3),
+            ("t값", prec.portfolio.t, "0.0"),
+            ("R²", prec.portfolio.r2, PCT),
+            ("95% 신뢰구간 하한 (원시)", prec.portfolio.ci_low, F3),
+            ("95% 신뢰구간 상한 (원시)", prec.portfolio.ci_high, F3),
+            ("개별 Peer 표준오차 평균", prec.mean_single_se, F3),
+            ("잔차 독립 가정 시 기대 표준오차", prec.se_if_independent, F3),
+            ("Peer 잔차 간 평균 상관", prec.mean_residual_corr, "0.00"),
+            ("개별 베타의 표준편차", prec.beta_dispersion, F3),
+            ("재레버 베타 구간 하한", band[0], F3),
+            ("재레버 베타 구간 상한", band[1], F3),
+            ("무위험이자율 (가정)", coe["risk_free"], PCT),
+            ("시장위험프리미엄 (가정)", coe["erp"], PCT),
+            ("자기자본비용 하한", coe["risk_free"] + band[0] * coe["erp"], PCT),
+            ("자기자본비용 상한", coe["risk_free"] + band[1] * coe["erp"], PCT),
+        ]
+        ps["A1"] = "베타 추정의 정밀도 — R² 가 아니라 표준오차로 판단한다"
+        ps["A1"].font = BOLD
+        for i, (label, v, fmt) in enumerate(rows, 3):
+            ps.cell(i, 1, label)
+            c = ps.cell(i, 2, float(v))
+            c.number_format = fmt
+        ps.cell(len(rows) + 4, 1, "Peer 를 묶어도 표준오차가 '독립 가정' 값까지 줄지 않는 이유는 잔차가 서로 상관되어 있기 때문이다(업종 공통요인).")
+        ps.column_dimensions["A"].width = 44
+        ps.column_dimensions["B"].width = 14
 
     # ── 회귀통계 ──
     gs = wb.create_sheet("회귀통계")

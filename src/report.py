@@ -17,7 +17,8 @@ def _md(df: pd.DataFrame) -> str:
     return "\n".join(lines)
 
 
-def write(path: Path, cfg: dict, meas, cap: pd.DataFrame, chain, ranges: pd.DataFrame, excel_result: str) -> None:
+def write(path: Path, cfg: dict, meas, cap: pd.DataFrame, chain, ranges: pd.DataFrame, excel_result: str,
+          prec=None, band=None) -> None:
     b = meas.base
     p = chain.peers
     peers = pd.DataFrame({
@@ -31,6 +32,8 @@ def write(path: Path, cfg: dict, meas, cap: pd.DataFrame, chain, ranges: pd.Data
     rng = ranges.pivot(index="index_label", columns="setting", values="relevered").map("{:.2f}".format)
     sig = ranges.pivot(index="index_label", columns="setting", values="median_r2").map("{:.1%}".format)
     w = meas.semi_weight
+    coe = cfg["cost_of_equity"]
+    ke_low, ke_high = coe["risk_free"] + band[0] * coe["erp"], coe["risk_free"] + band[1] * coe["erp"]
     text = f"""# 실행 결과 요약
 
 - 대상: {cfg['case']['target_name']} · 평가기준일 {meas.valuation_date.date()}
@@ -44,6 +47,20 @@ def write(path: Path, cfg: dict, meas, cap: pd.DataFrame, chain, ranges: pd.Data
 - 무부채 베타 중앙값 **{chain.median_unlevered:.3f}** (평균 {chain.mean_unlevered:.3f})
 - 목표 D/E (Peer 중앙값) **{chain.target_de:.1%}**
 - 재레버 베타 **{chain.relevered:.3f}** (Harris-Pringle 비교 {chain.relevered_hp:.3f})
+
+## 추정 정밀도 (채택 조건)
+
+| 항목 | 값 |
+|---|---|
+| Peer 동일가중 포트폴리오 베타 | {prec.portfolio.beta:.3f} |
+| 표준오차 / t값 / R² | {prec.portfolio.se:.3f} / {prec.portfolio.t:.1f} / {prec.portfolio.r2:.1%} |
+| 95% 신뢰구간 (원시) | {prec.portfolio.ci_low:.2f} ~ {prec.portfolio.ci_high:.2f} |
+| 개별 Peer 표준오차 평균 | {prec.mean_single_se:.3f} |
+| 잔차가 독립이라면 기대되는 표준오차 | {prec.se_if_independent:.3f} |
+| Peer 잔차 간 평균 상관 | {prec.mean_residual_corr:.2f} |
+| 개별 베타의 표준편차 | {prec.beta_dispersion:.3f} |
+| **재레버 베타 구간** | **{band[0]:.2f} ~ {band[1]:.2f}** |
+| 자기자본비용 (rf {coe['risk_free']:.1%}, ERP {coe['erp']:.1%} 가정) | {ke_low:.1%} ~ {ke_high:.1%} |
 
 ## 시장지수 × 측정조건별 재레버 베타
 

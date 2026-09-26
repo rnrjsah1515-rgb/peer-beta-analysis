@@ -13,7 +13,9 @@ from src.config import ROOT, api_key, load_config, load_env
 from src.excel import build
 from src.excel_check import check
 from src.pipeline import INDEX_CHOICES, measure
+from src.precision import analyze, relevered_band
 from src.prices import fx_rate
+from src import beta as B
 from src.selection import debt_of, range_table, run_chain
 
 
@@ -54,16 +56,24 @@ def main():
     raw = w[list(cfg["peers"])].apply(lambda s: np.cov(s, w[idx], ddof=1)[0, 1] / w[idx].var())
     chain = run_chain(raw, cap["de"], tax)
     ranges = range_table(meas.grid, cap["de"], tax, INDEX_CHOICES)
+    freq, nobs = cfg["measurement"]["alternatives"][cfg["measurement"]["base"]]
+    prec = analyze({c: B.returns(meas.stocks[c], meas.indices[idx], freq, int(nobs), meas.valuation_date)
+                    for c in cfg["peers"]}, cap["de"])
+    band = relevered_band(prec, chain.target_de, tax)
+    coe = cfg["cost_of_equity"]
+    print(f"  추정오차: 포트폴리오 β {prec.portfolio.beta:.3f} (SE {prec.portfolio.se:.3f}, R² {prec.portfolio.r2:.1%})"
+          f" → 재레버 구간 {band[0]:.2f}~{band[1]:.2f}"
+          f" · Ke {coe['risk_free'] + band[0] * coe['erp']:.1%}~{coe['risk_free'] + band[1] * coe['erp']:.1%}")
     print(f"  βu 중앙값 {chain.median_unlevered:.3f} · 목표 D/E {chain.target_de:.1%} → 재레버 β {chain.relevered:.3f}")
 
     print("[4/4] 엑셀·보고서")
     xlsx = ROOT / "output" / "peer_beta.xlsx"
-    refs = build(xlsx, cfg, meas, cap, debt_log, ranges, INDEX_CHOICES)
+    refs = build(xlsx, cfg, meas, cap, debt_log, ranges, INDEX_CHOICES, prec, band)
     expected = {refs["median_unlevered"]: chain.median_unlevered, refs["relevered"]: chain.relevered,
                 **{refs[f"raw_{c}"]: float(raw[c]) for c in cfg["peers"]}}
     excel_result = "생략" if args.skip_excel_check else check(xlsx, expected)
     print("  엑셀 대조:", excel_result)
-    report.write(ROOT / "output" / "summary.md", cfg, meas, cap, chain, ranges, excel_result)
+    report.write(ROOT / "output" / "summary.md", cfg, meas, cap, chain, ranges, excel_result, prec, band)
     print("완료:", xlsx)
 
 
